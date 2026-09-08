@@ -53,8 +53,18 @@
     .student-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border-color); }
     .toast { position: fixed; bottom: 20px; right: 20px; background: #10b981; color: white; padding: 10px 16px; border-radius: 6px; display: none; box-shadow: 0 2px 8px rgba(0,0,0,0.2); z-index: 2000; }
     .toast.error { background: #ef4444; }
-    input { padding: 8px; border-radius: 4px; border: 1px solid #ccc; width: 100%; }
+    input, textarea { padding: 8px; border-radius: 4px; border: 1px solid #ccc; width: 100%; font-family: inherit; font-size: 1rem; }
+    textarea { resize: vertical; min-height: 90px; }
     .empty-message { color: #6b7280; text-align: center; padding: 20px; }
+    .tabs { display: flex; gap: 6px; margin-bottom: 14px; border-bottom: 1px solid var(--border-color); }
+    .tab-btn { flex: 1; background: none; color: #6b7280; border-radius: 0; padding: 8px 6px; border-bottom: 3px solid transparent; font-weight: 600; }
+    .tab-btn:hover { background: #f3f4f6; }
+    .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    .hint { font-size: 0.8rem; color: #6b7280; margin-top: 6px; }
+    .bulk-preview { max-height: 140px; overflow-y: auto; margin-top: 10px; background: #f9fafb; border: 1px solid var(--border-color); border-radius: 6px; padding: 8px; font-size: 0.85rem; }
+    .bulk-preview .dup { color: #b45309; }
   </style>
 </head>
 <body>
@@ -91,10 +101,31 @@
     <div class="modal">
       <h3>Gerenciar Alunos da Turma</h3>
       <br>
-      <div style="display: flex; gap: 8px;">
-        <input type="text" id="newStudentInput" placeholder="Nome do Aluno...">
-        <button id="btnAddStudent">Adicionar</button>
+
+      <div class="tabs">
+        <button type="button" class="tab-btn active" data-tab="tabUm">Adicionar 1 aluno</button>
+        <button type="button" class="tab-btn" data-tab="tabLista">Colar lista</button>
       </div>
+
+      <div id="tabUm" class="tab-panel active">
+        <div style="display: flex; gap: 8px;">
+          <input type="text" id="newStudentInput" placeholder="Nome do Aluno...">
+          <button id="btnAddStudent">Adicionar</button>
+        </div>
+      </div>
+
+      <div id="tabLista" class="tab-panel">
+        <textarea id="bulkStudentInput" placeholder="Cole aqui os nomes, um por linha (ou separados por vírgula/ponto e vírgula):
+
+Ana Souza
+Bruno Lima
+Carla Mendes"></textarea>
+        <div class="hint">Cada linha (ou nome separado por vírgula/;) vira um aluno. Nomes repetidos são ignorados automaticamente.</div>
+        <div id="bulkPreview" class="bulk-preview" style="display:none;"></div>
+        <br>
+        <button id="btnBulkAdd">Adicionar todos</button>
+      </div>
+
       <br>
       <div id="studentsList"></div>
       <br>
@@ -433,6 +464,89 @@
         showToast(`✅ ${nome} adicionado`);
       } else {
         showToast("⚠️ Aluno já cadastrado!", true);
+      }
+    });
+
+    // --- Abas do modal "Gerenciar Alunos" (Adicionar 1 x Colar lista) ---
+    document.querySelectorAll(".tab-btn").forEach(tabBtn => {
+      tabBtn.addEventListener("click", () => {
+        document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+        document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+        tabBtn.classList.add("active");
+        document.getElementById(tabBtn.dataset.tab).classList.add("active");
+      });
+    });
+
+    // Separa a lista colada por quebras de linha, vírgula ou ponto e vírgula,
+    // remove espaços extras e descarta entradas vazias.
+    function parseBulkNames(texto) {
+      return texto
+        .split(/[\n,;]+/)
+        .map(n => n.trim().replace(/\s+/g, " "))
+        .filter(n => n.length > 0);
+    }
+
+    document.getElementById("bulkStudentInput").addEventListener("input", e => {
+      const preview = document.getElementById("bulkPreview");
+      const nomes = parseBulkNames(e.target.value);
+      if (nomes.length === 0) {
+        preview.style.display = "none";
+        return;
+      }
+      const sala = currentSala();
+      const rosterAtual = sala.roster || [];
+      const vistos = new Set();
+      const linhas = [];
+      nomes.forEach(nome => {
+        const chave = nome.toLowerCase();
+        const jaExisteNaTurma = rosterAtual.some(r => r.toLowerCase() === chave);
+        const repetidoNaLista = vistos.has(chave);
+        vistos.add(chave);
+        if (jaExisteNaTurma || repetidoNaLista) {
+          linhas.push(`<div class="dup">${nome} (já existe / repetido — será ignorado)</div>`);
+        } else {
+          linhas.push(`<div>${nome}</div>`);
+        }
+      });
+      preview.innerHTML = `<strong>${nomes.length} nome(s) detectado(s):</strong>` + linhas.join("");
+      preview.style.display = "block";
+    });
+
+    document.getElementById("btnBulkAdd").addEventListener("click", () => {
+      const textarea = document.getElementById("bulkStudentInput");
+      const nomes = parseBulkNames(textarea.value);
+      if (nomes.length === 0) {
+        showToast("⚠️ Cole ao menos um nome antes de adicionar.", true);
+        return;
+      }
+      const sala = currentSala();
+      sala.roster = sala.roster || [];
+      const vistos = new Set(sala.roster.map(n => n.toLowerCase()));
+      let adicionados = 0;
+      let ignorados = 0;
+      nomes.forEach(nome => {
+        const chave = nome.toLowerCase();
+        if (vistos.has(chave)) {
+          ignorados++;
+        } else {
+          sala.roster.push(nome);
+          vistos.add(chave);
+          adicionados++;
+        }
+      });
+      if (adicionados > 0) {
+        saveState();
+        renderStudentsList();
+        renderGrid();
+      }
+      textarea.value = "";
+      document.getElementById("bulkPreview").style.display = "none";
+      if (adicionados > 0 && ignorados > 0) {
+        showToast(`✅ ${adicionados} aluno(s) adicionado(s), ${ignorados} ignorado(s) por duplicidade`);
+      } else if (adicionados > 0) {
+        showToast(`✅ ${adicionados} aluno(s) adicionado(s)`);
+      } else {
+        showToast("⚠️ Todos os nomes já estavam cadastrados", true);
       }
     });
 
